@@ -919,3 +919,4 @@ async function init() {
   }, 5 * 60 * 1000);
 }
 init();
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

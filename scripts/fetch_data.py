@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch market data for the simulator (run by GitHub Actions).
 
-  python scripts/fetch_data.py history   # weekly adjusted closes since 2000 -> data/history/<id>.json
+  python scripts/fetch_data.py history   # weekly (from daily) adjusted closes since 2000 -> data/history/<id>.json
   python scripts/fetch_data.py live      # latest delayed quotes            -> data/live.json
 
 Only the standard library is used. Sources: Yahoo Finance chart API, with the
@@ -12,7 +12,7 @@ import os
 import sys
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
@@ -58,16 +58,19 @@ def history():
     ok = 0
     for sid, ysym in items:
         try:
-            r = yahoo_chart(ysym, f"period1=946684800&period2={now}&interval=1wk&events=div%2Csplit&includeAdjustedClose=true")
+            # 抓日線再自己合成週線：每週取最後一個交易日收盤，日期標在該週週一，
+            # 這樣台股、美股、匯率的每一週都會對齊（Yahoo 的週線起始日各不相同）
+            r = yahoo_chart(ysym, f"period1=946684800&period2={now}&interval=1d&events=div%2Csplit&includeAdjustedClose=true")
             ts = r.get("timestamp") or []
             q = r["indicators"]["quote"][0]
             adj = (r["indicators"].get("adjclose") or [{}])[0].get("adjclose") or q["close"]
-            off = r.get("meta", {}).get("gmtoffset") or 0  # weekly bars start on local Monday
+            off = r.get("meta", {}).get("gmtoffset") or 0
             dates, closes, raw = [], [], []
             for t, a, c in zip(ts, adj, q["close"]):
                 if a is None or c is None:
                     continue
-                d = datetime.fromtimestamp(t + off, tz=timezone.utc).strftime("%Y-%m-%d")
+                day = datetime.fromtimestamp(t + off, tz=timezone.utc).date()
+                d = (day - timedelta(days=day.weekday())).isoformat()
                 if dates and dates[-1] == d:
                     dates.pop(); closes.pop(); raw.pop()
                 dates.append(d)
