@@ -189,3 +189,8 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 600; font-
 .famcode.big { background: var(--accent-soft); border-radius: 14px; padding: 14px; margin: 12px 0; }
 .famcode.big b { font-size: 2.6rem; color: var(--accent); }
 .modal .profiles { margin: 10px 0; }
+.login { margin: 10px auto 0; max-width: 400px; text-align: left; }
+.login input { font-size: 1.05rem; padding: 12px; }
+.link.inline { margin: 0; padding: 0; font-size: inherit; }
+.member { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: .92rem; }
+.member .em { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

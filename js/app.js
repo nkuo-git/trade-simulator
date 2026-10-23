@@ -16,13 +16,15 @@ const fmtDate = (d) => { const [y, m, dd] = d.split('-'); return `${y} 年 ${+m}
 
 // ---------- 儲存 ----------
 const KEY = 'kidtrader.v1';
-// fam：這台手機加入的家庭 { id: 家庭代碼, role: 'parent' | 'kid' }；solo：選了不連線
-const defaultState = () => ({ v: 1, pin: null, startCash: 100000, profiles: [], cur: null, fam: null, solo: false });
+// email：登入的 Email；fam：所屬家庭 { id: 家庭代碼, role: 'parent' | 'kid' }；solo：選了不登入
+const defaultState = () => ({ v: 1, pin: null, startCash: 100000, profiles: [], cur: null, email: null, fam: null, solo: false });
 let S = (() => {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) return s; } catch (e) { /* 無法讀取就用新的 */ }
   return defaultState();
 })();
 function save() {
+  const cur = prof();
+  if (cur) cur.ts = Date.now();
   try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('⚠️ 無法儲存進度（瀏覽器不允許儲存）'); }
   schedulePush();
 }
@@ -30,16 +32,36 @@ const prof = () => S.profiles.find((p) => p.id === S.cur);
 
 // ---------- 家庭同步 ----------
 // R.family：雲端的家庭設定；R.remote：家庭裡所有玩家（含其他手機上的）
-const R = { family: null, remote: {}, unsub: [], online: false };
+const R = { family: null, remote: {}, unsub: [], online: false, linked: null };
 let pushTimer = null;
 function schedulePush() {
-  if (!S.fam) return;
+  if (!S.fam || !S.email) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(async () => {
     for (const p of S.profiles) {
       try { await sync.pushProfile(S.fam.id, p); } catch (e) { console.warn('同步失敗', e); }
     }
+    const ids = S.profiles.map((p) => p.id);
+    if (S.email && ids.join() !== R.linked) {
+      try { await sync.setUser(emailKey(S.email), { profiles: ids }); R.linked = ids.join(); } catch (e) { console.warn('同步失敗', e); }
+    }
   }, 1500);
+}
+// Firestore 的欄位名稱不能有「.」，所以 Email 裡的點換成逗號
+const emailKey = (email) => email.replace(/\./g, ',');
+const validEmail = (x) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
+// 登入後：從雲端帶回這個人的玩家，和這台手機上的合併（同一個玩家取最新的）
+async function enterFamily(email, fid, role, pids) {
+  const cloud = pids.length ? (await sync.listProfiles(fid)).filter((p) => pids.includes(p.id)) : [];
+  const local = !S.email || S.email === email ? S.profiles : [];
+  const byId = {};
+  for (const p of [...cloud, ...local]) if (!byId[p.id] || (p.ts || 0) >= (byId[p.id].ts || 0)) byId[p.id] = p;
+  S.profiles = Object.values(byId);
+  S.email = email; S.fam = { id: fid, role }; S.solo = false;
+  if (!S.profiles.some((p) => p.id === S.cur)) S.cur = S.profiles[0]?.id || null;
+  R.linked = null;
+  save();
+  await connectFamily();
 }
 const ctl = (p) => R.family?.controls?.[p.id] || {};
 const unlocked = (p) => (S.fam ? !!ctl(p).unlockAll : !!p.unlockAll);
@@ -375,6 +397,7 @@ function viewHome() {
     </div>
     ${installPrompt ? '<button class="btn" data-act="install" style="margin-top:24px">📲 安裝到手機主畫面</button><br>' : ''}
     <button class="link" data-act="parent">👨‍👩‍👧 家長專區</button>
+    ${S.email ? `<p class="small muted">已用 ${esc(S.email)} 登入 · <button class="link inline" data-act="logout">登出</button></p>` : sync.syncAvailable() ? '<p><button class="link inline" data-act="to-login">用 Email 登入，換手機也能接著玩</button></p>' : ''}
   </div>`;
 }
 
@@ -822,17 +845,17 @@ function viewParent() {
   return `
   <header class="top game"><button class="back" data-act="home">‹</button><div><b>👨‍👩‍👧 家長專區</b><small>${fam ? '全家的進度會自動同步' : '查看孩子的進度和交易理由'}</small></div></header>
   <main class="game-body">
-    ${fam ? `<div class="card hint famcode"><small>家庭代碼（給孩子在他的手機輸入）</small><b>${esc(fam.id)}</b><small>${R.online ? '🟢 已連線' : '⚪ 連線中…'}</small></div>` : ''}
-    ${kids || `<div class="card muted">${fam ? '還沒有孩子加入。請孩子在自己的手機打開 App，選「我是小孩」，輸入上面的家庭代碼。' : '還沒有玩家。'}</div>`}
+    ${kids || `<div class="card muted">${fam ? '還沒有孩子加入。在下面「家人」加入孩子的 Email，孩子用那個 Email 登入就會自動加入。' : '還沒有玩家。'}</div>`}
     ${fam?.role === 'parent' ? '<button class="btn full" data-act="home">🎮 我也要玩</button>' : ''}
     <h3>設定</h3>
     <div class="card">
       <label>新挑戰的起始資金 <input type="number" id="p-cash" value="${startCash()}" min="10000" step="10000"> 元</label>
       <div class="row"><button class="btn sm" data-act="p-cash">儲存</button><button class="btn sm ghost" data-act="p-pin">${fam || S.pin ? '更改' : '設定'}家長密碼</button></div>
     </div>
+    ${fam ? membersHtml() : ''}
     ${sync.syncAvailable() ? `<h3>這台手機</h3>
-    <div class="card"><p class="small">${fam ? `已加入家庭 ${esc(fam.id)}，身分：${fam.role === 'parent' ? '家長' : '小孩'}。` : '沒有連線到家庭，進度只存在這台手機。'}</p>
-      <button class="btn sm ghost" data-act="switch-role">${fam ? '切換身分／離開家庭' : '連線到家庭'}</button></div>` : ''}
+    <div class="card"><p class="small">${S.email ? `已用 <b>${esc(S.email)}</b> 登入（${fam?.role === 'parent' ? '家長' : '小孩'}）。 ${R.online ? '🟢 已連線' : '⚪ 連線中…'}` : '還沒登入，進度只存在這台手機。'}</p>
+      <button class="btn sm ghost" data-act="${S.email ? 'logout' : 'to-login'}">${S.email ? '登出' : '用 Email 登入'}</button></div>` : ''}
     <h3>備份與換裝置</h3>
     <div class="card">
       <p class="small">${fam ? '進度已經自動同步到雲端。也可以另外匯出一份備份。' : '所有進度存在這台裝置的瀏覽器裡。要換手機或平板，先在這裡匯出，再到新裝置匯入。'}</p>
@@ -843,6 +866,20 @@ function viewParent() {
     <h3>關於資料</h3>
     <div class="card small muted">歷史資料：Yahoo Finance 每週收盤價（含股利還原）。即時資料：台灣證交所與 Yahoo Finance，盤中每 15 分鐘更新，約延遲 15–20 分鐘。僅供教育用途。</div>
   </main>`;
+}
+function membersHtml() {
+  const members = Object.entries(R.family?.members || {}).filter(([, m]) => !m.removed);
+  const rows = members.map(([k, m]) => `<div class="member"><span>${m.role === 'parent' ? '👨‍👩‍👧' : '🧒'}</span><span class="em">${esc(m.email)}</span>
+    ${k === emailKey(S.email || '') ? '<small class="muted">（你）</small>' : `<button class="btn xs ghost" data-act="remove-member" data-key="${esc(k)}">移除</button>`}</div>`).join('');
+  return `<h3>家人</h3>
+    <div class="card">
+      ${rows || '<p class="small muted">還沒有家人。</p>'}
+      <p class="lbl">加入家人的 Email</p>
+      <input type="email" id="m-email" placeholder="孩子或另一位家長的 Email" autocomplete="off">
+      <div class="seg" id="m-role"><button class="on" data-role="kid">🧒 小孩</button><button data-role="parent">👨‍👩‍👧 家長</button></div>
+      <button class="btn sm full" data-act="add-member">加入</button>
+      <p class="small muted">加入後，他用這個 Email 登入（不用密碼）就會自動進到這個家庭。家長第一次在新手機登入時要輸入家長密碼。<br>也可以給孩子家庭代碼 <b>${esc(S.fam.id)}</b>，讓他自己加入。</p>
+    </div>`;
 }
 async function askPin(set) {
   const v = await new Promise((resolve) => {
@@ -888,17 +925,19 @@ function askText(title, placeholder) {
   });
 }
 
-// ---------- 畫面：第一次使用，選身分 ----------
+// ---------- 畫面：用 Email 登入 ----------
 function viewSetup() {
   return `
   <div class="home">
     <h1 class="logo">📈 小小操盤手</h1>
-    <p class="sub">這台手機是誰在用？</p>
-    <div class="profiles">
-      <button class="profile-card" data-act="setup-parent"><span class="ava">👨‍👩‍👧</span><b>我是家長</b><small>建立家庭、看孩子的進度</small></button>
-      <button class="profile-card" data-act="setup-kid"><span class="ava">🧒</span><b>我是小孩</b><small>輸入家長給的家庭代碼</small></button>
+    <p class="sub">用虛擬的錢，學真正的投資</p>
+    <div class="card login">
+      <label class="lbl" for="login-email">用 Email 登入</label>
+      <input type="email" id="login-email" placeholder="你的 Email" autocomplete="email" inputmode="email" value="${esc(UI.lastEmail || '')}">
+      <button class="btn big full" data-act="login">登入</button>
+      <p class="small muted">不用密碼。同一個 Email 在任何手機登入，進度都會自動帶回來。</p>
     </div>
-    <button class="link" data-act="setup-solo">先不連線，只在這台手機玩</button>
+    <button class="link" data-act="setup-solo">先不登入，只在這台手機玩</button>
   </div>`;
 }
 
@@ -1006,62 +1045,93 @@ const actions = {
     if (S.cur === p.id) S.cur = null;
     save(); render();
   },
-  async 'switch-role'() {
-    if (S.fam && (await waitModal('<h2>離開家庭？</h2><p>這台手機上的進度會留著，但不再同步。之後可以重新加入。</p><div class="row"><button class="btn danger" data-resolve="y">離開</button><button class="btn ghost" data-resolve="n">取消</button></div>')) !== 'y') return;
-    R.unsub.forEach((f) => f()); R.unsub = []; R.family = null; R.remote = {}; R.online = false;
-    S.fam = null; S.solo = false; save();
-    UI.parentOk = false; go('setup');
-  },
-  'setup-solo'() { S.solo = true; save(); go('home'); },
-  async 'setup-parent'() {
-    const how = await waitModal(`<h2>👨‍👩‍👧 家長</h2><div class="row"><button class="btn big" data-resolve="new">建立新家庭</button></div>
-      <div class="row"><button class="btn" data-resolve="join">加入已經建立的家庭<br><small>（例如另一位家長的手機）</small></button></div>`);
-    if (how === 'new') {
-      const pin = await askPin(true); if (!pin) return;
-      try {
+  'to-login'() { UI.parentOk = false; go('setup'); },
+  'setup-solo'() { S.solo = true; if (!S.email) S.fam = null; save(); go('home'); },
+  async login() {
+    const email = ($('#login-email')?.value || '').trim().toLowerCase();
+    UI.lastEmail = email;
+    if (!validEmail(email)) { toast('請輸入正確的 Email'); return; }
+    const key = emailKey(email);
+    try {
+      const u = await sync.getUser(key);
+      if (u?.family) {
+        const f = await sync.getFamily(u.family);
+        if (!f) { toast('找不到你的家庭，請問問家長'); return; }
+        if (u.role === 'parent') {
+          // 換新手機時要輸入家長密碼，避免小孩用家長的 Email 改設定
+          if (!(S.email === email && S.fam?.id === u.family)) {
+            const pin = await askPin(false); if (!pin) return;
+            if ((await hashPin(pin)) !== f.pinHash) { toast('家長密碼錯誤'); return; }
+          }
+          await enterFamily(email, u.family, 'parent', u.profiles || []);
+          UI.parentOk = true; go('parent');
+        } else {
+          await enterFamily(email, u.family, 'kid', u.profiles || []);
+          go('home');
+          if (!S.profiles.length) actions['add-profile']();
+          else if (S.profiles.length === 1) go('main', { tab: 'play' });
+        }
+        toast(`👋 歡迎回來`);
+        return;
+      }
+      const who = await waitModal(`<h2>第一次來！你是？</h2>
+        <div class="profiles"><button class="profile-card" data-resolve="parent"><span class="ava">👨‍👩‍👧</span><b>家長</b><small>建立一個新家庭</small></button>
+        <button class="profile-card" data-resolve="kid"><span class="ava">🧒</span><b>小孩</b><small>輸入家長給的家庭代碼</small></button></div>
+        <p class="small muted">小孩：如果家長已經在家長專區加入你的 Email，就不會看到這個畫面，會直接登入。</p>`);
+      if (who === 'parent') {
+        const pin = await askPin(true); if (!pin) return;
         let code = newCode();
         while (await sync.getFamily(code)) code = newCode();
-        await sync.setFamily(code, { created: Date.now(), pinHash: await hashPin(pin), startCash: S.startCash, controls: {} });
-        S.fam = { id: code, role: 'parent' }; save();
-        await connectFamily();
+        await sync.setFamily(code, { created: Date.now(), pinHash: await hashPin(pin), startCash: S.startCash, controls: {}, members: { [key]: { role: 'parent', email } } });
+        await sync.setUser(key, { email, role: 'parent', family: code, profiles: [] });
+        await enterFamily(email, code, 'parent', []);
         UI.parentOk = true; go('parent');
-        await waitModal(`<h2>🎉 家庭建立好了</h2><p>請孩子在自己的手機打開小小操盤手，選「我是小孩」，輸入這組家庭代碼：</p><div class="famcode big"><b>${code}</b></div><p class="small muted">之後在家長專區最上面也看得到。</p><button class="btn big full" data-resolve="ok">好</button>`);
-      } catch (e) { console.warn(e); toast('⚠️ 連不上雲端，請確認網路後再試'); }
-    } else if (how === 'join') {
-      const code = await askText('輸入家庭代碼', '例如 K7MP3Q'); if (!code) return;
-      try {
+        await waitModal(`<h2>🎉 家庭建立好了</h2><p>下一步：在家長專區的「家人」加入孩子的 Email。孩子在自己的手機用那個 Email 登入，就會自動加入。</p><p class="small muted">或是請孩子選「小孩」，輸入家庭代碼：</p><div class="famcode big"><b>${code}</b></div><button class="btn big full" data-resolve="ok">好</button>`);
+      } else if (who === 'kid') {
+        const code = await askText('輸入家庭代碼', '家長手機上的 6 個字'); if (!code) return;
         const f = await sync.getFamily(code);
-        if (!f) { toast('找不到這個家庭代碼'); return; }
-        const pin = await askPin(false); if (!pin) return;
-        if ((await hashPin(pin)) !== f.pinHash) { toast('家長密碼錯誤'); return; }
-        S.fam = { id: code, role: 'parent' }; save();
-        await connectFamily();
-        UI.parentOk = true; go('parent');
-      } catch (e) { console.warn(e); toast('⚠️ 連不上雲端，請確認網路後再試'); }
-    }
+        if (!f) { toast('找不到這個家庭代碼，請再確認一次'); return; }
+        await sync.setUser(key, { email, role: 'kid', family: code, profiles: [] });
+        await sync.setFamily(code, { members: { [key]: { role: 'kid', email } } });
+        await enterFamily(email, code, 'kid', []);
+        go('home');
+        if (!S.profiles.length) actions['add-profile']();
+      }
+    } catch (e) { console.warn(e); toast('⚠️ 連不上雲端，請確認網路後再試'); }
   },
-  async 'setup-kid'() {
-    const code = await askText('輸入家庭代碼', '家長手機上的 6 個字'); if (!code) return;
-    let list;
+  async logout() {
+    if ((await waitModal('<h2>登出？</h2><p>這台手機上的進度會清掉。下次用同一個 Email 登入，進度就會回來。</p><div class="row"><button class="btn danger" data-resolve="y">登出</button><button class="btn ghost" data-resolve="n">取消</button></div>')) !== 'y') return;
+    clearTimeout(pushTimer);
     try {
-      const f = await sync.getFamily(code);
-      if (!f) { toast('找不到這個家庭代碼，請再確認一次'); return; }
-      list = await sync.listProfiles(code);
-    } catch (e) { console.warn(e); toast('⚠️ 連不上雲端，請確認網路後再試'); return; }
-    const known = new Set(list.map((p) => p.id));
-    const mine = S.profiles.filter((p) => !known.has(p.id));
-    const card = (p, tag) => `<button class="profile-card" data-resolve="${tag}:${p.id}"><span class="ava">${p.avatar}</span><b>${esc(p.name)}</b></button>`;
-    const pick = await waitModal(`<h2>你是誰？</h2>
-      <div class="profiles">${list.map((p) => card(p, 'r')).join('')}${mine.map((p) => card(p, 'l')).join('')}
-      <button class="profile-card add" data-resolve="new"><span class="ava">＋</span><b>我是新玩家</b></button></div>`);
-    if (!pick) return;
-    S.fam = { id: code, role: 'kid' };
-    if (pick === 'new') { save(); await connectFamily(); actions['add-profile'](); return; }
-    const [tag, id] = pick.split(':');
-    if (tag === 'r' && !S.profiles.some((p) => p.id === id)) S.profiles.push(list.find((p) => p.id === id));
-    S.cur = id; save();
-    await connectFamily();
-    go('main', { tab: 'play' });
+      for (const p of S.profiles) await sync.pushProfile(S.fam.id, p);
+    } catch (e) { toast('⚠️ 現在連不上雲端，請連上網路再登出，免得進度不見'); return; }
+    R.unsub.forEach((f) => f());
+    Object.assign(R, { family: null, remote: {}, unsub: [], online: false, linked: null });
+    S = defaultState(); save();
+    UI.parentOk = false; go('setup');
+  },
+  async 'add-member'() {
+    const email = ($('#m-email')?.value || '').trim().toLowerCase();
+    if (!validEmail(email)) { toast('請輸入正確的 Email'); return; }
+    const role = $('#m-role .on')?.dataset.role || 'kid';
+    const key = emailKey(email);
+    try {
+      const u = await sync.getUser(key);
+      if (u?.family && u.family !== S.fam.id) { toast('這個 Email 已經在別的家庭了'); return; }
+      await sync.setUser(key, { email, role, family: S.fam.id, ...(u ? {} : { profiles: [] }) });
+      await famSet({ members: { [key]: { role, email, removed: false } } });
+      toast(`✅ 已加入 ${email}`);
+      render();
+    } catch (e) { console.warn(e); }
+  },
+  async 'remove-member'(el) {
+    const key = el.dataset.key, m = R.family?.members?.[key];
+    if (!m || (await waitModal(`<h2>移除 ${esc(m.email)}？</h2><p>他之後用這個 Email 登入，就不會再進到這個家庭。已經玩的進度會留在家長專區，可以另外刪除。</p><div class="row"><button class="btn danger" data-resolve="y">移除</button><button class="btn ghost" data-resolve="n">取消</button></div>`)) !== 'y') return;
+    try {
+      await sync.setUser(key, { family: null });
+      await famSet({ members: { [key]: { removed: true } } });
+      render();
+    } catch (e) { console.warn(e); }
   },
   'p-export'() {
     const name = `小小操盤手備份-${today()}.json`;
@@ -1080,6 +1150,11 @@ document.addEventListener('click', (e) => {
   if (fn) { e.preventDefault(); fn(el, e); }
 });
 document.addEventListener('input', (e) => { if (e.target.closest('.calc')) updateCalc(); });
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('#m-role [data-role]');
+  if (b) b.parentElement.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'login-email') actions.login(); });
 document.addEventListener('change', async (e) => {
   if (e.target.id !== 'p-import') return;
   const f = e.target.files[0]; if (!f) return;
@@ -1087,7 +1162,7 @@ document.addEventListener('change', async (e) => {
     const s = JSON.parse(await f.text());
     if (s.v !== 1 || !Array.isArray(s.profiles)) throw new Error('bad');
     if ((await waitModal('<h2>匯入進度？</h2><p>這台裝置目前的進度會被取代。</p><div class="row"><button class="btn danger" data-resolve="y">匯入</button><button class="btn ghost" data-resolve="n">取消</button></div>')) !== 'y') return;
-    s.fam = S.fam; s.solo = S.solo; S = s; save(); applyControls(); toast('✅ 匯入完成'); render();
+    s.fam = S.fam; s.email = S.email; s.solo = S.solo; S = s; save(); applyControls(); toast('✅ 匯入完成'); render();
   } catch (err) { toast('檔案格式不對'); }
 });
 
@@ -1103,7 +1178,7 @@ function render() {
 // Android App 的返回鍵：有東西可以退就回 true
 window.appBack = () => {
   if (document.querySelector('.modal-bg')) { closeModal(); return true; }
-  if (UI.view === 'parent' && S.fam?.role === 'parent') return false;
+  if (UI.view === 'parent' && S.fam?.role === 'parent' && S.email) return false;
   if (UI.view === 'game' || UI.view === 'parent') { UI.view === 'parent' ? actions.home() : go('main'); return true; }
   if (UI.view === 'home' && S.fam?.role === 'parent') { UI.parentOk = true; go('parent'); return true; }
   if (UI.view === 'main' && UI.tab !== 'play') { UI.tab = 'play'; render(); return true; }
@@ -1124,11 +1199,11 @@ async function init() {
     app().innerHTML = '<div class="card warn">載入資料失敗，請重新整理頁面。</div>';
     return;
   }
-  if (sync.syncAvailable() && !S.fam && !S.solo) UI.view = 'setup';
-  else if (S.fam?.role === 'parent') { UI.parentOk = true; UI.view = 'parent'; }
+  if (sync.syncAvailable() && !S.email && !S.solo) UI.view = 'setup';
+  else if (S.email && S.fam?.role === 'parent') { UI.parentOk = true; UI.view = 'parent'; }
   else if (prof()) UI.view = 'main';
   render();
-  if (S.fam) connectFamily();
+  if (S.email && S.fam) connectFamily();
   liveTimer = setInterval(async () => {
     await loadLive();
     if (UI.view === 'main' && UI.tab === 'live' && !document.querySelector('.modal-bg')) render();

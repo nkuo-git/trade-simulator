@@ -1,6 +1,7 @@
 // 家庭雲端同步（Firebase Firestore）
 // families/{代碼}            家庭設定：家長密碼、起始資金、家長對每個玩家的控制（解鎖、重設、改名、移除）
 // families/{代碼}/profiles/{玩家}  每個玩家的完整進度（JSON 字串）
+// users/{email}             用 Email 找到這個人屬於哪個家庭、是家長還是小孩、有哪些玩家
 import { FIREBASE_CONFIG } from './firebase-config.js';
 
 const V = '10.12.2';
@@ -45,4 +46,14 @@ export async function watchFamily(fid, cb) {
 export async function watchProfiles(fid, cb) {
   await init();
   return fs.onSnapshot(fs.collection(db, 'families', fid, 'profiles'), (s) => cb(s.docs.map((d) => JSON.parse(d.data().data))), () => {});
+}
+
+export async function getUser(key) {
+  await init();
+  const s = await fs.getDoc(fs.doc(db, 'users', key));
+  return s.exists() ? s.data() : null;
+}
+export async function setUser(key, patch) {
+  await init();
+  await fs.setDoc(fs.doc(db, 'users', key), patch, { merge: true });
 }

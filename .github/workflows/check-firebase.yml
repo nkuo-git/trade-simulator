@@ -8,3 +8,4 @@ jobs:
         run: |
           curl -sS -w '\nHTTP %{http_code}\n' "https://firestore.googleapis.com/v1/projects/trade-simulator-690ae/databases/(default)/documents/families/NOSUCH?key=AIzaSyAqPQMRZfNkd0j7TuVLlrsirt14io-PXM8"
           curl -sS -w '\nHTTP %{http_code}\n' "https://firestore.googleapis.com/v1/projects/trade-simulator-690ae/databases/(default)/documents/families/NOSUCH/profiles?key=AIzaSyAqPQMRZfNkd0j7TuVLlrsirt14io-PXM8"
+          curl -sS -w '\nHTTP %{http_code}\n' "https://firestore.googleapis.com/v1/projects/trade-simulator-690ae/databases/(default)/documents/users/nosuch?key=AIzaSyAqPQMRZfNkd0j7TuVLlrsirt14io-PXM8"

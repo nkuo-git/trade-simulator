@@ -8,5 +8,9 @@ service cloud.firestore {
         allow read, write: if true;
       }
     }
+    // 用 Email 找到自己的家庭；不能列出所有使用者
+    match /users/{key} {
+      allow get, create, update: if true;
+    }
   }
 }
