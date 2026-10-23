@@ -1,0 +1,12 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    // 知道家庭代碼才能讀寫那個家庭；不能列出所有家庭
+    match /families/{fid} {
+      allow get, create, update: if true;
+      match /profiles/{pid} {
+        allow read, write: if true;
+      }
+    }
+  }
+}

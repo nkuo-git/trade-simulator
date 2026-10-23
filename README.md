@@ -11,6 +11,13 @@
 - **即時模式**：用約延遲 15 分鐘的真實報價練習
 - **排行榜、徽章、家長專區**（可設密碼、看孩子的交易理由、匯出匯入進度）
 
+## 家長和小孩用不同手機（Firebase 同步）
+1. 在 [Firebase 主控台](https://console.firebase.google.com) 建專案，新增「網頁」應用程式，把 `firebaseConfig` 貼進 `js/firebase-config.js`
+2. 建立 Firestore 資料庫（asia-east1），規則貼上 `firestore.rules`
+3. 第一次打開 App 會問身分：家長「建立家庭」拿到 6 碼家庭代碼，小孩輸入代碼加入。家長手機可以看全家進度、解鎖功能、改起始資金
+
+`firebase-config.js` 是 `null` 時，App 只在單機使用（家長專區用同一台手機的密碼保護）。
+
 ## 資料
 `.github/workflows/deploy.yml` 用 GitHub Actions 執行 `scripts/fetch_data.py`：
 - 盤中每 15 分鐘抓台股（證交所）與美股（Yahoo Finance）報價 → `data/live.json`

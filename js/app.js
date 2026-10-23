@@ -1,4 +1,5 @@
 import { LESSONS, SCENARIOS, EVENTS, BADGES, REASONS, AVATARS } from './content.js';
+import * as sync from './sync.js';
 
 // ---------- 小工具 ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -15,15 +16,74 @@ const fmtDate = (d) => { const [y, m, dd] = d.split('-'); return `${y} 年 ${+m}
 
 // ---------- 儲存 ----------
 const KEY = 'kidtrader.v1';
-const defaultState = () => ({ v: 1, pin: null, startCash: 100000, profiles: [], cur: null, board: [] });
+// fam：這台手機加入的家庭 { id: 家庭代碼, role: 'parent' | 'kid' }；solo：選了不連線
+const defaultState = () => ({ v: 1, pin: null, startCash: 100000, profiles: [], cur: null, fam: null, solo: false });
 let S = (() => {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) return s; } catch (e) { /* 無法讀取就用新的 */ }
   return defaultState();
 })();
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('⚠️ 無法儲存進度（瀏覽器不允許儲存）'); }
+  schedulePush();
 }
 const prof = () => S.profiles.find((p) => p.id === S.cur);
+
+// ---------- 家庭同步 ----------
+// R.family：雲端的家庭設定；R.remote：家庭裡所有玩家（含其他手機上的）
+const R = { family: null, remote: {}, unsub: [], online: false };
+let pushTimer = null;
+function schedulePush() {
+  if (!S.fam) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(async () => {
+    for (const p of S.profiles) {
+      try { await sync.pushProfile(S.fam.id, p); } catch (e) { console.warn('同步失敗', e); }
+    }
+  }, 1500);
+}
+const ctl = (p) => R.family?.controls?.[p.id] || {};
+const unlocked = (p) => (S.fam ? !!ctl(p).unlockAll : !!p.unlockAll);
+const startCash = () => (S.fam && R.family?.startCash) || S.startCash;
+// 這台手機的玩家優先，其餘用雲端的
+function allProfiles() {
+  const local = new Set(S.profiles.map((p) => p.id));
+  return [...S.profiles, ...Object.values(R.remote).filter((p) => !local.has(p.id))];
+}
+// 套用家長從別支手機下的指令
+function applyControls() {
+  let changed = false;
+  for (const p of [...S.profiles]) {
+    const c = ctl(p);
+    if (c.removed) { S.profiles = S.profiles.filter((x) => x !== p); if (S.cur === p.id) S.cur = null; changed = true; continue; }
+    if (c.resetLiveAt && c.resetLiveAt > (p.liveResetAt || 0)) { p.live = null; p.liveResetAt = c.resetLiveAt; changed = true; }
+    if (c.name && c.name !== p.name) { p.name = c.name; changed = true; }
+  }
+  if (changed) save();
+}
+const quietView = () => !document.querySelector('.modal-bg') && UI.view !== 'game' && !(UI.view === 'main' && UI.tab === 'learn');
+async function connectFamily() {
+  R.unsub.forEach((f) => f());
+  R.unsub = [];
+  if (!S.fam) return;
+  try {
+    R.unsub.push(await sync.watchFamily(S.fam.id, (f) => {
+      R.family = f; R.online = true;
+      applyControls();
+      if (quietView()) render();
+    }));
+    R.unsub.push(await sync.watchProfiles(S.fam.id, (list) => {
+      R.remote = Object.fromEntries(list.map((p) => [p.id, p]));
+      if (quietView()) render();
+    }));
+    schedulePush();
+  } catch (e) {
+    console.warn(e);
+    toast('⚠️ 暫時連不上雲端，進度會先存在這台手機');
+  }
+}
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const newCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => CODE_CHARS[b % CODE_CHARS.length]).join('');
+const normCode = (x) => (x || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 // ---------- 行情資料 ----------
 const D = { syms: [], byId: {}, hist: {}, histLoaded: false, live: null };
@@ -65,15 +125,15 @@ const visibleSyms = () => D.syms.filter((s) => !s.hidden);
 // ---------- 進度與解鎖 ----------
 const lessonDone = (p, k) => p.lessons.includes(k);
 const finishedGames = (p) => p.games.filter((g) => g.done).length;
-const lessonOpen = (p, k) => p.unlockAll || k === 1 || (lessonDone(p, k - 1) && finishedGames(p) >= k - 1);
+const lessonOpen = (p, k) => unlocked(p) || k === 1 || (lessonDone(p, k - 1) && finishedGames(p) >= k - 1);
 const can = {
-  trade: (p) => p.unlockAll || lessonDone(p, 1),
-  etf: (p) => p.unlockAll || lessonDone(p, 2),
-  fees: (p) => p.unlockAll || lessonDone(p, 4),
-  live: (p) => p.unlockAll || lessonDone(p, 4),
-  stops: (p) => p.unlockAll || lessonDone(p, 5),
-  calc: (p) => p.unlockAll || lessonDone(p, 3),
-  scenario: (p, sc) => p.unlockAll || lessonDone(p, sc.lesson),
+  trade: (p) => unlocked(p) || lessonDone(p, 1),
+  etf: (p) => unlocked(p) || lessonDone(p, 2),
+  fees: (p) => unlocked(p) || lessonDone(p, 4),
+  live: (p) => unlocked(p) || lessonDone(p, 4),
+  stops: (p) => unlocked(p) || lessonDone(p, 5),
+  calc: (p) => unlocked(p) || lessonDone(p, 3),
+  scenario: (p, sc) => unlocked(p) || lessonDone(p, sc.lesson),
 };
 const levelOf = (xp) => Math.floor(xp / 200) + 1;
 
@@ -184,7 +244,7 @@ function gameCtx(g) {
   return { mode: 'game', date, fx: fxAt(date), price: (id) => histPrice(id, date) };
 }
 function startGame(p, sc) {
-  const g = { id: uid(), sc: sc.id, i: 0, acc: newAccount(S.startCash), snaps: [S.startCash], preds: [], done: false, started: Date.now() };
+  const g = { id: uid(), sc: sc.id, i: 0, acc: newAccount(startCash()), snaps: [startCash()], preds: [], done: false, started: Date.now() };
   p.games.push(g);
   save();
   return g;
@@ -218,7 +278,6 @@ function finishGame(p, g) {
   const final = g.snaps[g.i];
   const b = benchSeries(sc, g.acc.start);
   g.result = { ret: final / g.acc.start - 1, dca: b.dca[g.i] / g.acc.start - 1, lump: b.lump[g.i] / g.acc.start - 1, full: g.i >= timeline(sc).length - 1 };
-  S.board.push({ pid: p.id, sc: sc.id, ret: g.result.ret, dca: g.result.dca, date: today(), full: g.result.full });
   if (g.result.full) {
     addXp(p, 100);
     if (sc.id === 'crash2008' || sc.id === 'covid2020') award(p, 'survivor');
@@ -409,16 +468,18 @@ function tabJournal(p) {
 }
 
 function tabRank(p) {
-  const name = (pid) => { const x = S.profiles.find((q) => q.id === pid); return x ? `${x.avatar} ${esc(x.name)}` : '（已刪除）'; };
+  const everyone = allProfiles();
+  const board = everyone.flatMap((x) => x.games.filter((g) => g.done && g.result?.full).map((g) => ({ pid: x.id, sc: g.sc, ret: g.result.ret, dca: g.result.dca })));
+  const name = (pid) => { const x = everyone.find((q) => q.id === pid); return x ? `${x.avatar} ${esc(x.name)}` : '（已刪除）'; };
   const sections = SCENARIOS.map((sc) => {
     const best = {};
-    for (const r of S.board) if (r.sc === sc.id && r.full && (!best[r.pid] || r.ret > best[r.pid].ret)) best[r.pid] = r;
+    for (const r of board) if (r.sc === sc.id && (!best[r.pid] || r.ret > best[r.pid].ret)) best[r.pid] = r;
     const rows = Object.values(best).sort((a, b) => b.ret - a.ret);
     if (!rows.length) return '';
     return `<div class="card"><b>${sc.emoji} ${sc.title}</b><table class="rank">${rows.map((r, i) => `<tr><td>${['🥇', '🥈', '🥉'][i] || i + 1}</td><td>${name(r.pid)}</td><td class="${cls(r.ret)}">${pct(r.ret)}</td><td class="muted">0050 定額 ${pct(r.dca)}</td></tr>`).join('')}</table></div>`;
   }).join('');
   const lc = liveCtx();
-  const live = S.profiles.filter((x) => x.live && D.live).map((x) => ({ x, r: totalValue(x.live.acc, lc) / x.live.acc.start - 1 })).sort((a, b) => b.r - a.r);
+  const live = everyone.filter((x) => x.live && D.live).map((x) => ({ x, r: totalValue(x.live.acc, lc) / x.live.acc.start - 1 })).sort((a, b) => b.r - a.r);
   const liveHtml = live.length ? `<div class="card"><b>📡 即時模式</b><table class="rank">${live.map(({ x, r }, i) => `<tr><td>${['🥇', '🥈', '🥉'][i] || i + 1}</td><td>${x.avatar} ${esc(x.name)}</td><td class="${cls(r)}">${pct(r)}</td></tr>`).join('')}</table></div>` : '';
   const badges = BADGES.map((b) => `<div class="badge ${p.badges[b.id] ? 'got' : ''}" title="${esc(b.desc)}"><span>${b.emoji}</span><b>${b.name}</b><small>${p.badges[b.id] ? p.badges[b.id] : esc(b.desc)}</small></div>`).join('');
   return `<h2>排行榜</h2>${sections || liveHtml ? sections + liveHtml : '<div class="card muted">完成一場挑戰就會出現在排行榜上。</div>'}
@@ -715,7 +776,7 @@ function lessonModal(k) {
 function tabLive(p) {
   if (!can.live(p)) return `<h2>即時模式</h2><div class="card locked-big">🔒 完成第 4 課「手續費和稅」就能解鎖即時模式，用現在真正的股價來練習！</div>`;
   if (!D.live) return `<h2>即時模式</h2><div class="card warn">📡 即時行情資料還在準備中，請稍後再試。</div>`;
-  if (!p.live) return `<h2>即時模式</h2><div class="card"><p>用現在真實的股價（約延遲 15 分鐘）練習交易。你會拿到 <b>${ntd(S.startCash)}</b> 虛擬現金，這個帳戶會一直保留，看看幾個月後的成果！</p><button class="btn big" data-act="live-start">開設即時帳戶</button></div>`;
+  if (!p.live) return `<h2>即時模式</h2><div class="card"><p>用現在真實的股價（約延遲 15 分鐘）練習交易。你會拿到 <b>${ntd(startCash())}</b> 虛擬現金，這個帳戶會一直保留，看看幾個月後的成果！</p><button class="btn big" data-act="live-start">開設即時帳戶</button></div>`;
   const ctx = liveCtx(), acc = p.live.acc, v = totalValue(acc, ctx), ret = v / acc.start - 1;
   const q = D.live.quotes;
   const snaps = p.live.snaps;
@@ -743,7 +804,8 @@ function tabLive(p) {
 function viewParent() {
   if (!UI.parentOk) return '';
   const lc = liveCtx();
-  const kids = S.profiles.map((p) => {
+  const fam = S.fam;
+  const kids = (fam ? allProfiles() : S.profiles).map((p) => {
     const trades = allTrades(p).slice(0, 8);
     const lv = p.live && D.live ? totalValue(p.live.acc, lc) : null;
     return `<div class="card kid">
@@ -751,24 +813,29 @@ function viewParent() {
       <p class="small">交易 ${allTrades(p).length} 筆 · 已回顧 ${p.reviews} 筆${lv != null ? ` · 即時帳戶 ${ntd(lv)}（<span class="${cls(lv / p.live.acc.start - 1)}">${pct(lv / p.live.acc.start - 1)}</span>）` : ''}</p>
       ${trades.length ? `<details><summary>最近的交易理由</summary>${trades.map(({ t, where }) => `<div class="pnote"><span class="tag ${t.side}">${t.side === 'buy' ? '買' : '賣'}</span> ${esc(D.byId[t.sym].name)} · <small>${esc(where)} ${t.date}</small><br>💭 ${esc(t.note)}${t.review ? `<br>🔍 ${esc(t.review.text)}` : ''}</div>`).join('')}</details>` : ''}
       <div class="row">
-        <button class="btn sm" data-act="p-unlock" data-id="${p.id}">${p.unlockAll ? '取消全部解鎖' : '解鎖全部功能'}</button>
+        <button class="btn sm" data-act="p-unlock" data-id="${p.id}">${unlocked(p) ? '取消全部解鎖' : '解鎖全部功能'}</button>
         ${p.live ? `<button class="btn sm ghost" data-act="p-reset-live" data-id="${p.id}">重設即時帳戶</button>` : ''}
         <button class="btn sm ghost" data-act="p-rename" data-id="${p.id}">改名</button>
         <button class="btn sm danger" data-act="p-delete" data-id="${p.id}">刪除</button>
       </div></div>`;
   }).join('');
   return `
-  <header class="top game"><button class="back" data-act="home">‹</button><div><b>👨‍👩‍👧 家長專區</b><small>查看孩子的進度和交易理由</small></div></header>
+  <header class="top game"><button class="back" data-act="home">‹</button><div><b>👨‍👩‍👧 家長專區</b><small>${fam ? '全家的進度會自動同步' : '查看孩子的進度和交易理由'}</small></div></header>
   <main class="game-body">
-    ${kids || '<div class="card muted">還沒有玩家。</div>'}
+    ${fam ? `<div class="card hint famcode"><small>家庭代碼（給孩子在他的手機輸入）</small><b>${esc(fam.id)}</b><small>${R.online ? '🟢 已連線' : '⚪ 連線中…'}</small></div>` : ''}
+    ${kids || `<div class="card muted">${fam ? '還沒有孩子加入。請孩子在自己的手機打開 App，選「我是小孩」，輸入上面的家庭代碼。' : '還沒有玩家。'}</div>`}
+    ${fam?.role === 'parent' ? '<button class="btn full" data-act="home">🎮 我也要玩</button>' : ''}
     <h3>設定</h3>
     <div class="card">
-      <label>新挑戰的起始資金 <input type="number" id="p-cash" value="${S.startCash}" min="10000" step="10000"> 元</label>
-      <div class="row"><button class="btn sm" data-act="p-cash">儲存</button><button class="btn sm ghost" data-act="p-pin">${S.pin ? '更改' : '設定'}家長密碼</button></div>
+      <label>新挑戰的起始資金 <input type="number" id="p-cash" value="${startCash()}" min="10000" step="10000"> 元</label>
+      <div class="row"><button class="btn sm" data-act="p-cash">儲存</button><button class="btn sm ghost" data-act="p-pin">${fam || S.pin ? '更改' : '設定'}家長密碼</button></div>
     </div>
+    ${sync.syncAvailable() ? `<h3>這台手機</h3>
+    <div class="card"><p class="small">${fam ? `已加入家庭 ${esc(fam.id)}，身分：${fam.role === 'parent' ? '家長' : '小孩'}。` : '沒有連線到家庭，進度只存在這台手機。'}</p>
+      <button class="btn sm ghost" data-act="switch-role">${fam ? '切換身分／離開家庭' : '連線到家庭'}</button></div>` : ''}
     <h3>備份與換裝置</h3>
     <div class="card">
-      <p class="small">所有進度存在這台裝置的瀏覽器裡。要換手機或平板，先在這裡匯出，再到新裝置匯入。</p>
+      <p class="small">${fam ? '進度已經自動同步到雲端。也可以另外匯出一份備份。' : '所有進度存在這台裝置的瀏覽器裡。要換手機或平板，先在這裡匯出，再到新裝置匯入。'}</p>
       <div class="row"><button class="btn sm" data-act="p-export">⬇️ 匯出進度</button><label class="btn sm ghost">⬆️ 匯入進度<input type="file" accept=".json,application/json" id="p-import" hidden></label></div>
     </div>
     ${window.AndroidApp ? '' : `<h3>手機 App</h3>
@@ -793,6 +860,46 @@ async function askPin(set) {
 async function hashPin(x) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('kidtrader:' + x));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const findProfile = (id) => allProfiles().find((x) => x.id === id);
+// 寫入家庭設定，並先更新本機副本（雲端的回傳稍後會再覆蓋）
+async function famSet(patch) {
+  try { await sync.setFamily(S.fam.id, patch); } catch (e) { toast('⚠️ 連不上雲端，請稍後再試'); throw e; }
+  const { controls, ...rest } = patch;
+  R.family = { ...R.family, ...rest };
+  if (controls) {
+    R.family.controls = { ...(R.family.controls || {}) };
+    for (const [k, v] of Object.entries(controls)) R.family.controls[k] = { ...(R.family.controls[k] || {}), ...v };
+  }
+}
+const famCtl = (pid, patch) => famSet({ controls: { [pid]: patch } });
+function askText(title, placeholder) {
+  return new Promise((resolve) => {
+    modal(`<h2>${esc(title)}</h2><input id="tx" maxlength="12" autocapitalize="characters" autocomplete="off" placeholder="${esc(placeholder)}"><button class="btn big full" id="tx-go">確定</button>`, {
+      onMount: (m) => {
+        const done = () => { const v = normCode($('#tx', m).value); if (!v) return; closeModal(); resolve(v); };
+        $('#tx-go', m).addEventListener('click', done);
+        $('#tx', m).addEventListener('keydown', (e) => e.key === 'Enter' && done());
+        m.parentElement.addEventListener('click', (e) => { if (e.target === m.parentElement || e.target.closest('[data-close]')) resolve(null); });
+        setTimeout(() => $('#tx', m).focus(), 50);
+      },
+    });
+  });
+}
+
+// ---------- 畫面：第一次使用，選身分 ----------
+function viewSetup() {
+  return `
+  <div class="home">
+    <h1 class="logo">📈 小小操盤手</h1>
+    <p class="sub">這台手機是誰在用？</p>
+    <div class="profiles">
+      <button class="profile-card" data-act="setup-parent"><span class="ava">👨‍👩‍👧</span><b>我是家長</b><small>建立家庭、看孩子的進度</small></button>
+      <button class="profile-card" data-act="setup-kid"><span class="ava">🧒</span><b>我是小孩</b><small>輸入家長給的家庭代碼</small></button>
+    </div>
+    <button class="link" data-act="setup-solo">先不連線，只在這台手機玩</button>
+  </div>`;
 }
 
 // ---------- 事件處理 ----------
@@ -820,7 +927,7 @@ const actions = {
   async 'new-game'(el) {
     const p = prof(), sc = scById(el.dataset.id);
     if (!timeline(sc).length) { toast('這個時期的資料還沒準備好'); return; }
-    const ok = await waitModal(`<h2>${sc.emoji} ${sc.title}</h2><p>${esc(sc.intro)}</p><p>你有 <b>${ntd(S.startCash)}</b> 虛擬現金，可以買台股和美股。每按一次「下一週」，時間就往前走一週。</p><p class="muted small">對手：每個月固定拿一樣多的錢買 ${benchSeries(sc, S.startCash).name}（定期定額）。</p><button class="btn big full" data-resolve="go">出發！🚀</button>`);
+    const ok = await waitModal(`<h2>${sc.emoji} ${sc.title}</h2><p>${esc(sc.intro)}</p><p>你有 <b>${ntd(startCash())}</b> 虛擬現金，可以買台股和美股。每按一次「下一週」，時間就往前走一週。</p><p class="muted small">對手：每個月固定拿一樣多的錢買 ${benchSeries(sc, startCash()).name}（定期定額）。</p><button class="btn big full" data-resolve="go">出發！🚀</button>`);
     if (ok !== 'go') return;
     const g = startGame(p, sc);
     go('game', { gameId: g.id });
@@ -841,39 +948,120 @@ const actions = {
   review(el) { reviewModal(el.dataset.tid); },
   'live-start'() {
     const p = prof();
-    p.live = { acc: newAccount(S.startCash), snaps: [], bench0: D.live?.quotes['0050']?.p || null, created: today() };
+    p.live = { acc: newAccount(startCash()), snaps: [], bench0: D.live?.quotes['0050']?.p || null, created: today() };
     save(); render();
   },
   async parent() {
-    if (S.pin) {
+    if (S.fam?.role === 'parent') { UI.parentOk = true; go('parent'); return; }
+    const hash = S.fam ? R.family?.pinHash : S.pin;
+    if (S.fam && !hash) { toast('還沒連上雲端，請稍後再試'); return; }
+    if (hash) {
       const x = await askPin(false); if (!x) return;
-      if ((await hashPin(x)) !== S.pin) { toast('密碼錯誤'); return; }
+      if ((await hashPin(x)) !== hash) { toast('密碼錯誤'); return; }
     }
     UI.parentOk = true; go('parent');
   },
-  async 'p-pin'() { const x = await askPin(true); if (!x) return; S.pin = await hashPin(x); save(); toast('已設定家長密碼'); },
-  'p-cash'() { const v = Math.round(+$('#p-cash').value); if (v >= 1000) { S.startCash = v; save(); toast('已儲存（新的挑戰和即時帳戶生效）'); } },
-  'p-unlock'(el) { const p = S.profiles.find((x) => x.id === el.dataset.id); p.unlockAll = !p.unlockAll; save(); render(); },
+  async 'p-pin'() {
+    const x = await askPin(true); if (!x) return;
+    const h = await hashPin(x);
+    if (S.fam) await famSet({ pinHash: h }); else { S.pin = h; save(); }
+    toast('已設定家長密碼');
+  },
+  async 'p-cash'() {
+    const v = Math.round(+$('#p-cash').value);
+    if (v < 1000) return;
+    if (S.fam) await famSet({ startCash: v }); else { S.startCash = v; save(); }
+    toast('已儲存（新的挑戰和即時帳戶生效）');
+  },
+  async 'p-unlock'(el) {
+    const p = findProfile(el.dataset.id);
+    if (S.fam) await famCtl(p.id, { unlockAll: !unlocked(p) }); else { p.unlockAll = !p.unlockAll; save(); }
+    render();
+  },
   async 'p-reset-live'(el) {
-    const p = S.profiles.find((x) => x.id === el.dataset.id);
+    const p = findProfile(el.dataset.id);
     if ((await waitModal(`<h2>重設 ${esc(p.name)} 的即時帳戶？</h2><p>持股和交易紀錄會清除。</p><div class="row"><button class="btn danger" data-resolve="y">重設</button><button class="btn ghost" data-resolve="n">取消</button></div>`)) !== 'y') return;
-    p.live = null; save(); render();
+    if (S.fam) await famCtl(p.id, { resetLiveAt: Date.now() }); else { p.live = null; save(); }
+    render();
   },
   async 'p-rename'(el) {
-    const p = S.profiles.find((x) => x.id === el.dataset.id);
+    const p = findProfile(el.dataset.id);
     modal(`<h2>改名</h2><input id="rn" maxlength="12" value="${esc(p.name)}"><button class="btn big full" id="rn-go">儲存</button>`, {
-      onMount: (m) => $('#rn-go', m).addEventListener('click', () => {
-        const n = $('#rn', m).value.trim(); if (!n) return;
-        p.name = n.slice(0, 12); save(); closeModal(); render();
+      onMount: (m) => $('#rn-go', m).addEventListener('click', async () => {
+        const n = $('#rn', m).value.trim().slice(0, 12); if (!n) return;
+        if (S.fam) await famCtl(p.id, { name: n }); else { p.name = n; save(); }
+        closeModal(); render();
       }),
     });
   },
   async 'p-delete'(el) {
-    const p = S.profiles.find((x) => x.id === el.dataset.id);
+    const p = findProfile(el.dataset.id);
     if ((await waitModal(`<h2>刪除 ${esc(p.name)}？</h2><p>所有進度都會消失，無法復原。</p><div class="row"><button class="btn danger" data-resolve="y">刪除</button><button class="btn ghost" data-resolve="n">取消</button></div>`)) !== 'y') return;
-    S.profiles = S.profiles.filter((x) => x !== p); S.board = S.board.filter((r) => r.pid !== p.id);
+    if (S.fam) {
+      await famCtl(p.id, { removed: true });
+      try { await sync.removeProfile(S.fam.id, p.id); } catch (e) { /* 下次再試 */ }
+      delete R.remote[p.id];
+    }
+    S.profiles = S.profiles.filter((x) => x !== p);
     if (S.cur === p.id) S.cur = null;
     save(); render();
+  },
+  async 'switch-role'() {
+    if (S.fam && (await waitModal('<h2>離開家庭？</h2><p>這台手機上的進度會留著，但不再同步。之後可以重新加入。</p><div class="row"><button class="btn danger" data-resolve="y">離開</button><button class="btn ghost" data-resolve="n">取消</button></div>')) !== 'y') return;
+    R.unsub.forEach((f) => f()); R.unsub = []; R.family = null; R.remote = {}; R.online = false;
+    S.fam = null; S.solo = false; save();
+    UI.parentOk = false; go('setup');
+  },
+  'setup-solo'() { S.solo = true; save(); go('home'); },
+  async 'setup-parent'() {
+    const how = await waitModal(`<h2>👨‍👩‍👧 家長</h2><div class="row"><button class="btn big" data-resolve="new">建立新家庭</button></div>
+      <div class="row"><button class="btn" data-resolve="join">加入已經建立的家庭<br><small>（例如另一位家長的手機）</small></button></div>`);
+    if (how === 'new') {
+      const pin = await askPin(true); if (!pin) return;
+      try {
+        let code = newCode();
+        while (await sync.getFamily(code)) code = newCode();
+        await sync.setFamily(code, { created: Date.now(), pinHash: await hashPin(pin), startCash: S.startCash, controls: {} });
+        S.fam = { id: code, role: 'parent' }; save();
+        await connectFamily();
+        UI.parentOk = true; go('parent');
+        await waitModal(`<h2>🎉 家庭建立好了</h2><p>請孩子在自己的手機打開小小操盤手，選「我是小孩」，輸入這組家庭代碼：</p><div class="famcode big"><b>${code}</b></div><p class="small muted">之後在家長專區最上面也看得到。</p><button class="btn big full" data-resolve="ok">好</button>`);
+      } catch (e) { console.warn(e); toast('⚠️ 連不上雲端，請確認網路後再試'); }
+    } else if (how === 'join') {
+      const code = await askText('輸入家庭代碼', '例如 K7MP3Q'); if (!code) return;
+      try {
+        const f = await sync.getFamily(code);
+        if (!f) { toast('找不到這個家庭代碼'); return; }
+        const pin = await askPin(false); if (!pin) return;
+        if ((await hashPin(pin)) !== f.pinHash) { toast('家長密碼錯誤'); return; }
+        S.fam = { id: code, role: 'parent' }; save();
+        await connectFamily();
+        UI.parentOk = true; go('parent');
+      } catch (e) { console.warn(e); toast('⚠️ 連不上雲端，請確認網路後再試'); }
+    }
+  },
+  async 'setup-kid'() {
+    const code = await askText('輸入家庭代碼', '家長手機上的 6 個字'); if (!code) return;
+    let list;
+    try {
+      const f = await sync.getFamily(code);
+      if (!f) { toast('找不到這個家庭代碼，請再確認一次'); return; }
+      list = await sync.listProfiles(code);
+    } catch (e) { console.warn(e); toast('⚠️ 連不上雲端，請確認網路後再試'); return; }
+    const known = new Set(list.map((p) => p.id));
+    const mine = S.profiles.filter((p) => !known.has(p.id));
+    const card = (p, tag) => `<button class="profile-card" data-resolve="${tag}:${p.id}"><span class="ava">${p.avatar}</span><b>${esc(p.name)}</b></button>`;
+    const pick = await waitModal(`<h2>你是誰？</h2>
+      <div class="profiles">${list.map((p) => card(p, 'r')).join('')}${mine.map((p) => card(p, 'l')).join('')}
+      <button class="profile-card add" data-resolve="new"><span class="ava">＋</span><b>我是新玩家</b></button></div>`);
+    if (!pick) return;
+    S.fam = { id: code, role: 'kid' };
+    if (pick === 'new') { save(); await connectFamily(); actions['add-profile'](); return; }
+    const [tag, id] = pick.split(':');
+    if (tag === 'r' && !S.profiles.some((p) => p.id === id)) S.profiles.push(list.find((p) => p.id === id));
+    S.cur = id; save();
+    await connectFamily();
+    go('main', { tab: 'play' });
   },
   'p-export'() {
     const name = `小小操盤手備份-${today()}.json`;
@@ -899,14 +1087,14 @@ document.addEventListener('change', async (e) => {
     const s = JSON.parse(await f.text());
     if (s.v !== 1 || !Array.isArray(s.profiles)) throw new Error('bad');
     if ((await waitModal('<h2>匯入進度？</h2><p>這台裝置目前的進度會被取代。</p><div class="row"><button class="btn danger" data-resolve="y">匯入</button><button class="btn ghost" data-resolve="n">取消</button></div>')) !== 'y') return;
-    S = s; save(); toast('✅ 匯入完成'); render();
+    s.fam = S.fam; s.solo = S.solo; S = s; save(); applyControls(); toast('✅ 匯入完成'); render();
   } catch (err) { toast('檔案格式不對'); }
 });
 
 // ---------- 主畫面 ----------
 function render() {
-  if (UI.view !== 'home' && UI.view !== 'parent' && !prof()) UI.view = 'home';
-  const html = { home: viewHome, main: viewMain, game: viewGame, parent: viewParent }[UI.view]();
+  if (!['home', 'parent', 'setup'].includes(UI.view) && !prof()) UI.view = 'home';
+  const html = { home: viewHome, main: viewMain, game: viewGame, parent: viewParent, setup: viewSetup }[UI.view]();
   app().innerHTML = html;
   app().className = 'view-' + UI.view;
   if ($('#c-out')) updateCalc();
@@ -915,7 +1103,9 @@ function render() {
 // Android App 的返回鍵：有東西可以退就回 true
 window.appBack = () => {
   if (document.querySelector('.modal-bg')) { closeModal(); return true; }
+  if (UI.view === 'parent' && S.fam?.role === 'parent') return false;
   if (UI.view === 'game' || UI.view === 'parent') { UI.view === 'parent' ? actions.home() : go('main'); return true; }
+  if (UI.view === 'home' && S.fam?.role === 'parent') { UI.parentOk = true; go('parent'); return true; }
   if (UI.view === 'main' && UI.tab !== 'play') { UI.tab = 'play'; render(); return true; }
   return false;
 };
@@ -934,8 +1124,11 @@ async function init() {
     app().innerHTML = '<div class="card warn">載入資料失敗，請重新整理頁面。</div>';
     return;
   }
-  if (prof()) UI.view = 'main';
+  if (sync.syncAvailable() && !S.fam && !S.solo) UI.view = 'setup';
+  else if (S.fam?.role === 'parent') { UI.parentOk = true; UI.view = 'parent'; }
+  else if (prof()) UI.view = 'main';
   render();
+  if (S.fam) connectFamily();
   liveTimer = setInterval(async () => {
     await loadLive();
     if (UI.view === 'main' && UI.tab === 'live' && !document.querySelector('.modal-bg')) render();
