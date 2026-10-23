@@ -1,0 +1,10 @@
+name: 檢查 Firebase 連線
+on: workflow_dispatch
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 讀取一個不存在的家庭（不會寫入任何資料）
+        run: |
+          curl -sS -w '\nHTTP %{http_code}\n' "https://firestore.googleapis.com/v1/projects/trade-simulator-690ae/databases/(default)/documents/families/NOSUCH?key=AIzaSyAqPQMRZfNkd0j7TuVLlrsirt14io-PXM8"
+          curl -sS -w '\nHTTP %{http_code}\n' "https://firestore.googleapis.com/v1/projects/trade-simulator-690ae/databases/(default)/documents/families/NOSUCH/profiles?key=AIzaSyAqPQMRZfNkd0j7TuVLlrsirt14io-PXM8"
