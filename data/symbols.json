@@ -1,0 +1,209 @@
+{
+ "fx": {
+  "yahoo": "TWD=X",
+  "name": "美元兌台幣"
+ },
+ "symbols": [
+  {
+   "id": "2330",
+   "yahoo": "2330.TW",
+   "name": "台積電",
+   "market": "TW",
+   "type": "stock",
+   "desc": "全球最大的晶片代工廠，幫蘋果、輝達做晶片"
+  },
+  {
+   "id": "2317",
+   "yahoo": "2317.TW",
+   "name": "鴻海",
+   "market": "TW",
+   "type": "stock",
+   "desc": "幫蘋果組裝 iPhone，也做伺服器和電動車"
+  },
+  {
+   "id": "2454",
+   "yahoo": "2454.TW",
+   "name": "聯發科",
+   "market": "TW",
+   "type": "stock",
+   "desc": "設計手機晶片的公司"
+  },
+  {
+   "id": "2308",
+   "yahoo": "2308.TW",
+   "name": "台達電",
+   "market": "TW",
+   "type": "stock",
+   "desc": "做電源和節能設備"
+  },
+  {
+   "id": "2412",
+   "yahoo": "2412.TW",
+   "name": "中華電信",
+   "market": "TW",
+   "type": "stock",
+   "desc": "電信公司，股價波動小，常被當成穩定股"
+  },
+  {
+   "id": "2881",
+   "yahoo": "2881.TW",
+   "name": "富邦金",
+   "market": "TW",
+   "type": "stock",
+   "desc": "銀行、保險、證券的金融集團"
+  },
+  {
+   "id": "2603",
+   "yahoo": "2603.TW",
+   "name": "長榮",
+   "market": "TW",
+   "type": "stock",
+   "desc": "貨櫃航運公司，景氣好壞影響很大"
+  },
+  {
+   "id": "1216",
+   "yahoo": "1216.TW",
+   "name": "統一",
+   "market": "TW",
+   "type": "stock",
+   "desc": "食品公司，也是 7-11 的母公司"
+  },
+  {
+   "id": "2002",
+   "yahoo": "2002.TW",
+   "name": "中鋼",
+   "market": "TW",
+   "type": "stock",
+   "desc": "台灣最大的鋼鐵公司"
+  },
+  {
+   "id": "0050",
+   "yahoo": "0050.TW",
+   "name": "元大台灣50",
+   "market": "TW",
+   "type": "etf",
+   "desc": "一次買進台灣市值最大的 50 家公司"
+  },
+  {
+   "id": "0056",
+   "yahoo": "0056.TW",
+   "name": "元大高股息",
+   "market": "TW",
+   "type": "etf",
+   "desc": "挑選配息比較高的台灣公司"
+  },
+  {
+   "id": "AAPL",
+   "yahoo": "AAPL",
+   "name": "蘋果",
+   "market": "US",
+   "type": "stock",
+   "desc": "iPhone、Mac 的公司"
+  },
+  {
+   "id": "MSFT",
+   "yahoo": "MSFT",
+   "name": "微軟",
+   "market": "US",
+   "type": "stock",
+   "desc": "Windows、Office、Xbox，也投資 AI"
+  },
+  {
+   "id": "NVDA",
+   "yahoo": "NVDA",
+   "name": "輝達",
+   "market": "US",
+   "type": "stock",
+   "desc": "顯示卡和 AI 晶片的龍頭"
+  },
+  {
+   "id": "GOOGL",
+   "yahoo": "GOOGL",
+   "name": "Google",
+   "market": "US",
+   "type": "stock",
+   "desc": "搜尋引擎、YouTube、Android"
+  },
+  {
+   "id": "AMZN",
+   "yahoo": "AMZN",
+   "name": "亞馬遜",
+   "market": "US",
+   "type": "stock",
+   "desc": "網路購物和雲端服務"
+  },
+  {
+   "id": "TSLA",
+   "yahoo": "TSLA",
+   "name": "特斯拉",
+   "market": "US",
+   "type": "stock",
+   "desc": "電動車公司，股價上下震盪很大"
+  },
+  {
+   "id": "KO",
+   "yahoo": "KO",
+   "name": "可口可樂",
+   "market": "US",
+   "type": "stock",
+   "desc": "飲料公司，很穩定、每年配息"
+  },
+  {
+   "id": "MCD",
+   "yahoo": "MCD",
+   "name": "麥當勞",
+   "market": "US",
+   "type": "stock",
+   "desc": "全球最大速食連鎖店"
+  },
+  {
+   "id": "DIS",
+   "yahoo": "DIS",
+   "name": "迪士尼",
+   "market": "US",
+   "type": "stock",
+   "desc": "電影、樂園、Disney+"
+  },
+  {
+   "id": "NKE",
+   "yahoo": "NKE",
+   "name": "Nike",
+   "market": "US",
+   "type": "stock",
+   "desc": "運動鞋和運動服裝"
+  },
+  {
+   "id": "JPM",
+   "yahoo": "JPM",
+   "name": "摩根大通",
+   "market": "US",
+   "type": "stock",
+   "desc": "美國最大的銀行"
+  },
+  {
+   "id": "SPY",
+   "yahoo": "SPY",
+   "name": "標普500 ETF",
+   "market": "US",
+   "type": "etf",
+   "desc": "一次買進美國最大的 500 家公司"
+  },
+  {
+   "id": "QQQ",
+   "yahoo": "QQQ",
+   "name": "那斯達克100 ETF",
+   "market": "US",
+   "type": "etf",
+   "desc": "一次買進美國 100 家大型科技公司"
+  },
+  {
+   "id": "TWII",
+   "yahoo": "^TWII",
+   "name": "台股加權指數",
+   "market": "TW",
+   "type": "index",
+   "hidden": true,
+   "desc": "台灣整體股市的表現"
+  }
+ ]
+}

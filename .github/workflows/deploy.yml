@@ -1,0 +1,68 @@
+name: 更新行情並發布
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      history:
+        description: "重新抓歷史資料"
+        type: boolean
+        default: true
+  schedule:
+    - cron: "*/15 1-5 * * 1-5"    # 台股盤中（台北 09:00–13:59）
+    - cron: "*/15 13-20 * * 1-5"  # 美股盤中（約台北 21:30–04:00）
+    - cron: "0 22 * * 5"          # 每週五收盤後更新歷史資料
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 歷史資料
+        if: github.event_name == 'workflow_dispatch' && inputs.history || github.event.schedule == '0 22 * * 5' || hashFiles('data/history/0050.json') == ''
+        run: python scripts/fetch_data.py history
+
+      - name: 儲存歷史資料
+        if: github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/history
+          if ! git diff --cached --quiet; then
+            git commit -m "更新歷史行情 [skip ci]"
+            git push
+          fi
+
+      - name: 即時（延遲）報價
+        run: python scripts/fetch_data.py live || echo "live quotes unavailable this run"
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
