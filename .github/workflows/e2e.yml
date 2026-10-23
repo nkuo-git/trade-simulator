@@ -1,0 +1,16 @@
+name: 實機測試家庭同步
+on: workflow_dispatch
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: |
+          cd .github/e2e
+          npm init -y >/dev/null
+          npm i playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node family.mjs
