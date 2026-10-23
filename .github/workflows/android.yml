@@ -1,0 +1,35 @@
+name: 建置 Android App
+
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: 建置 APK
+        working-directory: android
+        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: 發布到 Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk trade-simulator.apk
+          gh release create "android-${{ github.run_number }}" trade-simulator.apk \
+            --title "小小操盤手 Android 版 1.0.${{ github.run_number }}" \
+            --notes "在 Android 手機下載 trade-simulator.apk 並安裝。之後網站更新時 App 會自動是最新內容，只有 App 外殼改版才需要重新安裝。" \
+            --latest

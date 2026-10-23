@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.application'
+}
+
+def runNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+
+android {
+    namespace 'io.github.nkuogit.tradesimulator'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'io.github.nkuogit.tradesimulator'
+        minSdk 24
+        targetSdk 34
+        versionCode runNumber
+        versionName "1.0.${runNumber}"
+    }
+
+    // 固定的簽章，讓每次新版都能直接覆蓋安裝（自用側載 App，不上架）
+    signingConfigs {
+        release {
+            storeFile file('../release.keystore')
+            storePassword 'tradesim'
+            keyAlias 'tradesim'
+            keyPassword 'tradesim'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+    }
+}

@@ -207,7 +207,7 @@ function stepGame(p, g) {
   }
   for (const h of Object.values(g.acc.holdings)) if (daysBetween(h.since, ctx.date) >= 364) award(p, 'diamond');
   g.snaps[g.i] = totalValue(g.acc, ctx);
-  const events = EVENTS.filter((e) => e.d > prev && e.d <= ctx.date);
+  const events = EVENTS.filter((e) => e.d > addDays(prev, 6) && e.d <= addDays(ctx.date, 6)); // 每一格代表一整週
   return { end: g.i >= tl.length - 1, events, stopped };
 }
 function finishGame(p, g) {
@@ -314,6 +314,7 @@ function viewHome() {
     <div class="profiles">${cards}
       <button class="profile-card add" data-act="add-profile"><span class="ava">＋</span><b>新增玩家</b></button>
     </div>
+    ${installPrompt ? '<button class="btn" data-act="install" style="margin-top:24px">📲 安裝到手機主畫面</button><br>' : ''}
     <button class="link" data-act="parent">👨‍👩‍👧 家長專區</button>
   </div>`;
 }
@@ -468,7 +469,7 @@ function viewGame() {
   return `
   <header class="top game">
     <button class="back" data-act="back">‹</button>
-    <div><b>${sc.emoji} ${sc.title}</b><small>${fmtDate(ctx.date)} · 第 ${g.i + 1}/${tl.length} 週</small></div>
+    <div><b>${sc.emoji} ${sc.title}</b><small>${fmtDate(ctx.date)} 那一週 · 第 ${g.i + 1}/${tl.length} 週</small></div>
     <span class="prog"><i style="width:${((g.i + 1) / tl.length) * 100}%"></i></span>
   </header>
   <main class="game-body">
@@ -770,6 +771,8 @@ function viewParent() {
       <p class="small">所有進度存在這台裝置的瀏覽器裡。要換手機或平板，先在這裡匯出，再到新裝置匯入。</p>
       <div class="row"><button class="btn sm" data-act="p-export">⬇️ 匯出進度</button><label class="btn sm ghost">⬆️ 匯入進度<input type="file" accept=".json,application/json" id="p-import" hidden></label></div>
     </div>
+    ${window.AndroidApp ? '' : `<h3>手機 App</h3>
+    <div class="card small">Android 手機可以下載 App：<a href="https://github.com/nkuo-git/trade-simulator/releases/latest/download/trade-simulator.apk">下載 trade-simulator.apk</a>（第一次安裝要允許「安裝不明來源的應用程式」）。<br>iPhone：用 Safari 打開這個網頁 → 分享 → 加入主畫面。</div>`}
     <h3>關於資料</h3>
     <div class="card small muted">歷史資料：Yahoo Finance 每週收盤價（含股利還原）。即時資料：台灣證交所與 Yahoo Finance，盤中每 15 分鐘更新，約延遲 15–20 分鐘。僅供教育用途。</div>
   </main>`;
@@ -858,7 +861,12 @@ const actions = {
   },
   async 'p-rename'(el) {
     const p = S.profiles.find((x) => x.id === el.dataset.id);
-    const n = prompt('新名字', p.name); if (n && n.trim()) { p.name = n.trim().slice(0, 12); save(); render(); }
+    modal(`<h2>改名</h2><input id="rn" maxlength="12" value="${esc(p.name)}"><button class="btn big full" id="rn-go">儲存</button>`, {
+      onMount: (m) => $('#rn-go', m).addEventListener('click', () => {
+        const n = $('#rn', m).value.trim(); if (!n) return;
+        p.name = n.slice(0, 12); save(); closeModal(); render();
+      }),
+    });
   },
   async 'p-delete'(el) {
     const p = S.profiles.find((x) => x.id === el.dataset.id);
@@ -868,9 +876,11 @@ const actions = {
     save(); render();
   },
   'p-export'() {
+    const name = `小小操盤手備份-${today()}.json`;
+    if (window.AndroidApp?.saveFile) { window.AndroidApp.saveFile(name, JSON.stringify(S)); return; }
     const blob = new Blob([JSON.stringify(S)], { type: 'application/json' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = `小小操盤手備份-${today()}.json`; a.click();
+    a.href = URL.createObjectURL(blob); a.download = name; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   },
 };
@@ -901,6 +911,19 @@ function render() {
   app().className = 'view-' + UI.view;
   if ($('#c-out')) updateCalc();
 }
+
+// Android App 的返回鍵：有東西可以退就回 true
+window.appBack = () => {
+  if (document.querySelector('.modal-bg')) { closeModal(); return true; }
+  if (UI.view === 'game' || UI.view === 'parent') { UI.view === 'parent' ? actions.home() : go('main'); return true; }
+  if (UI.view === 'main' && UI.tab !== 'play') { UI.tab = 'play'; render(); return true; }
+  return false;
+};
+
+// 「加到主畫面」按鈕（Chrome 支援時才出現）
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; if (UI.view === 'home') render(); });
+actions.install = async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; render(); };
 
 let liveTimer = null;
 async function init() {
