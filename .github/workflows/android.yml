@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     paths: ["android/**", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["android/**", ".github/workflows/android.yml"]
   workflow_dispatch:
 
 permissions:
@@ -25,6 +27,7 @@ jobs:
         working-directory: android
         run: gradle assembleRelease --no-daemon --stacktrace
       - name: 發布到 Releases
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

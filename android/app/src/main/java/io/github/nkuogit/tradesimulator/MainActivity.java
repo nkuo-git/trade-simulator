@@ -1,6 +1,7 @@
 package io.github.nkuogit.tradesimulator;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -14,12 +15,22 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /** 用 WebView 包住 GitHub Pages 上的網站：行情和新功能都會自動更新，不用重裝 App。 */
 public class MainActivity extends Activity {
     private static final String HOME = "https://nkuo-git.github.io/trade-simulator/";
+    private static final String LATEST_RELEASE =
+            "https://api.github.com/repos/nkuo-git/trade-simulator/releases/latest";
+    private static final String APK_URL =
+            "https://github.com/nkuo-git/trade-simulator/releases/latest/download/trade-simulator.apk";
     private static final int PICK_FILE = 1;
     private static final int SAVE_FILE = 2;
 
@@ -83,7 +94,57 @@ public class MainActivity extends Activity {
         });
 
         if (state != null) web.restoreState(state);
-        else web.loadUrl(HOME);
+        else {
+            web.loadUrl(HOME);
+            checkForUpdate();
+        }
+    }
+
+    /** 打開 App 時看看 Releases 上有沒有比較新的 APK（版號 = 發布編號 android-N）。 */
+    private void checkForUpdate() {
+        new Thread(() -> {
+            try {
+                HttpURLConnection c = (HttpURLConnection) new URL(LATEST_RELEASE).openConnection();
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(8000);
+                c.setRequestProperty("Accept", "application/vnd.github+json");
+                if (c.getResponseCode() != 200) return;
+                ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                try (InputStream in = c.getInputStream()) {
+                    byte[] b = new byte[8192];
+                    for (int n; (n = in.read(b)) > 0; ) buf.write(b, 0, n);
+                }
+                String tag = new JSONObject(buf.toString("UTF-8")).optString("tag_name");
+                if (!tag.startsWith("android-")) return;
+                long latest = Long.parseLong(tag.substring("android-".length()));
+                if (latest > installedVersion()) runOnUiThread(() -> showUpdate(latest));
+            } catch (Exception ignored) {
+                // 沒網路或 GitHub 連不上就算了，下次打開再檢查
+            }
+        }).start();
+    }
+
+    @SuppressWarnings("deprecation")
+    private long installedVersion() throws Exception {
+        android.content.pm.PackageInfo p = getPackageManager().getPackageInfo(getPackageName(), 0);
+        return android.os.Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode;
+    }
+
+    private void showUpdate(long latest) {
+        if (isFinishing()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("有新版 App 🎉")
+                .setMessage("小小操盤手 1.0." + latest + " 已經推出了。\n\n"
+                        + "按「下載更新」會下載新的安裝檔，下載完點開它、按「更新」就好，你的進度不會不見。")
+                .setPositiveButton("下載更新", (d, w) -> {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(APK_URL)));
+                    } catch (Exception e) {
+                        Toast.makeText(this, "打不開瀏覽器", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("下次再說", null)
+                .show();
     }
 
     @Override
