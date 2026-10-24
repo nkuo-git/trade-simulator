@@ -58,7 +58,8 @@ button.card:active, .mrow:active, .profile-card:active { transform: scale(.98); 
 
 /* 首頁 */
 .home { text-align: center; padding: 50px 16px; }
-.logo { font-size: 2.2rem; margin: 0; }
+.logo { font-size: 2.2rem; margin: 0; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.logo img { width: 1.5em; height: 1.5em; }
 .sub { color: var(--muted); margin: 4px 0 30px; }
 .profiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
 .profile-card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 20px 10px; display: flex; flex-direction: column; align-items: center; gap: 4px; box-shadow: var(--shadow); }

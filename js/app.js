@@ -390,7 +390,7 @@ function viewHome() {
     </button>`).join('');
   return `
   <div class="home">
-    <h1 class="logo">📈 小小操盤手</h1>
+    <h1 class="logo"><img src="icon.svg" alt=""> 小小操盤手</h1>
     <p class="sub">用虛擬的錢，學真正的投資</p>
     <div class="profiles">${cards}
       <button class="profile-card add" data-act="add-profile"><span class="ava">＋</span><b>新增玩家</b></button>
@@ -929,7 +929,7 @@ function askText(title, placeholder) {
 function viewSetup() {
   return `
   <div class="home">
-    <h1 class="logo">📈 小小操盤手</h1>
+    <h1 class="logo"><img src="icon.svg" alt=""> 小小操盤手</h1>
     <p class="sub">用虛擬的錢，學真正的投資</p>
     <div class="card login">
       <label class="lbl" for="login-email">用 Email 登入</label>
